@@ -1,0 +1,105 @@
+# The morning forecast: tomorrow's SEM day-ahead prices, saved here before the auction.
+#
+# Each morning: take the isem-data archive, fetch the last few days (SEMO's prices,
+# ENTSO-E's prices, EirGrid's wind forecast versions), run isem-forecast's live forecast,
+# and commit the day's two files to forecasts/. A day that already has a forecast (from
+# the laptop's backup run, say) is left alone: a saved forecast is never replaced.
+#
+# Secrets (Settings > Secrets and variables > Actions):
+#   ARCHIVE_TOKEN   a fine-grained token that can read Nabel7/isem-data-archive (Contents:
+#                   read-only), to download the archive's releases
+#   ENTSOE_TOKEN    the ENTSO-E Transparency Platform token, for yesterday's prices
+
+name: Morning forecast
+
+on:
+  schedule:
+    - cron: "30 7 * * *" # 07:30 UTC; the cut-off is 09:00 UTC, and GitHub sometimes starts late
+  workflow_dispatch:
+    inputs:
+      day:
+        description: "Delivery day, YYYY-MM-DD (default: tomorrow). A past day is marked late."
+        default: ""
+
+permissions:
+  contents: write # to commit the forecast
+
+concurrency: morning-forecast # never two at once
+
+jobs:
+  forecast:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: Nabel7/isem-data
+          path: isem-data
+
+      - uses: actions/checkout@v4
+        with:
+          repository: Nabel7/isem-forecast
+          path: isem-forecast
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            isem-data/pyproject.toml
+            isem-forecast/pyproject.toml
+
+      - name: Install
+        run: |
+          sudo apt-get install -y -qq zsh >/dev/null
+          # PyTorch for the CPU only: a few hundred MB instead of a few GB.
+          pip install -q torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -q -e isem-data -e "isem-forecast[foundation,gbm]"
+
+      # Chronos-2's weights (about 0.5 GB), kept between runs.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: chronos-2
+
+      - name: Restore the archive
+        working-directory: isem-data
+        env:
+          GH_TOKEN: ${{ secrets.ARCHIVE_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::The ARCHIVE_TOKEN secret isn't set, so the archive can't be read. See the top of this file."
+            exit 1
+          fi
+          zsh scripts/restore_data.sh github:Nabel7/isem-data-archive
+
+      # The archive is backed up once a day; this brings it up to this morning. A source
+      # that fails here isn't fatal: the forecast step says if anything it needs is missing.
+      - name: Fetch the last few days
+        working-directory: isem-data
+        continue-on-error: true
+        env:
+          ENTSOE_TOKEN: ${{ secrets.ENTSOE_TOKEN }}
+        run: |
+          python -m isem_data --datasets prices entsoe_prices wind_unit_forecasts \
+            --start "$(date -u -d '3 days ago' +%Y-%m-%d)" --end "$(date -u +%Y-%m-%d)"
+
+      - name: Forecast
+        env:
+          DAY: ${{ inputs.day }}
+        run: python -m isem_forecast.live --data-dir isem-data/data --out forecasts ${DAY:+--day "$DAY"}
+
+      - name: Save
+        run: |
+          git config user.name "isem live forecast"
+          git config user.email "actions@users.noreply.github.com"
+          git add forecasts
+          if git diff --cached --quiet; then
+            echo "Nothing new to save."
+            exit 0
+          fi
+          day=$(git diff --cached --name-only | grep -o '[0-9-]\{10\}' | head -1)
+          git commit -q -m "Forecast for $day, made $(date -u +%H:%M) UTC"
+          git pull -q --rebase && git push -q
