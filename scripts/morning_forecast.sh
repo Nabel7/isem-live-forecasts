@@ -1,11 +1,19 @@
 #!/bin/zsh
-# The laptop's copy of the morning forecast: a backup for the GitHub job
-# (.github/workflows/forecast.yml), which runs at 07:30 UTC.
+# Gets the morning forecast made in time, from the laptop.
 #
-# launchd runs this at 08:30 local time (see install_laptop_job.sh). It brings this
-# folder up to date first, so if GitHub's job has already saved tomorrow's forecast,
-# there's nothing to do. Otherwise it downloads the last few days with isem-data,
-# forecasts with isem-forecast, and commits and pushes the two files.
+# launchd runs this at 07:30 and again at 08:15 local time (see install_laptop_job.sh).
+# If tomorrow's forecast is already saved, there's nothing to do. Otherwise:
+#
+# 1. It starts GitHub's job (.github/workflows/forecast.yml) by hand and waits up to
+#    WAIT_MINUTES for it to save the forecast. GitHub's own schedule starts runs hours
+#    late (07:30 runs have started after 15:00), but a run started by hand begins within
+#    a minute or two, and does the work on GitHub's servers.
+# 2. If GitHub hasn't saved it by then, it forecasts here: downloads the last few days
+#    with isem-data, forecasts with isem-forecast, and commits and pushes the two files.
+#
+# The Mac is kept awake while this runs. Asleep with the lid shut, macOS only wakes it
+# for about 20 seconds every 15 minutes: on 22 Nov 2026 that stretched a one-minute run
+# over two hours, past the cut-off.
 #
 # If both make a forecast for the same day, whichever pushes first is kept: the other's
 # push fails, and this script drops its own copy. A saved forecast is never replaced.
@@ -15,6 +23,12 @@
 #   ISEM_FORECAST_PROJECT (default ~/Developer/isem-forecast)
 
 set -uo pipefail  # no -e: each failure is reported, not fatal
+
+if [[ -z ${MORNING_AWAKE:-} ]]; then  # run again under caffeinate, which keeps the Mac awake
+    MORNING_AWAKE=1 exec /usr/bin/caffeinate -i -s /bin/zsh "$0" "$@"
+fi
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"  # gh, which launchd's PATH lacks
+WAIT_MINUTES=${WAIT_MINUTES:-15}
 
 repo=$(cd "$(dirname "$0")/.." && pwd)
 data_project=${ISEM_DATA_PROJECT:-$HOME/Developer/isem-data}
@@ -45,7 +59,24 @@ if [[ -e forecasts/$day.csv ]]; then
     exit 0
 fi
 
-# The newest prices and wind forecast versions. If a download fails, forecast with
+# 1. Start GitHub's job, and give it time to save the forecast.
+saved() { git fetch -q origin && git cat-file -e "origin/main:forecasts/$day.csv" 2>/dev/null; }
+if gh workflow run forecast.yml -R Nabel7/isem-live-forecasts >/dev/null 2>&1; then
+    say "started GitHub's job; waiting up to $WAIT_MINUTES minutes for it"
+    for (( i = 0; i < WAIT_MINUTES * 2; i++ )); do
+        sleep 30
+        if saved; then
+            git pull -q --ff-only
+            say "GitHub's job saved $day: nothing more to do"
+            exit 0
+        fi
+    done
+    say "GitHub's job hasn't saved $day: forecasting here"
+else
+    say "couldn't start GitHub's job: forecasting here"
+fi
+
+# 2. Forecast here. The newest prices and wind forecast versions. If a download fails, forecast with
 # what's there: live.py says "not ready" if something it needs is missing.
 (cd "$data_project" && .venv/bin/python -m isem_data \
     --datasets prices entsoe_prices wind_unit_forecasts \

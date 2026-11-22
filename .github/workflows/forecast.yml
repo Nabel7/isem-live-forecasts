@@ -1,6 +1,8 @@
 # The morning forecast: tomorrow's SEM day-ahead prices, saved here before the auction.
 #
-# Each morning: take the isem-data archive, fetch the last few days (SEMO's prices,
+# Started by hand each morning by the laptop (scripts/morning_forecast.sh, at 07:30 local
+# time): GitHub's own schedule starts runs hours late, so the schedule below is only a
+# last resort. Each run: take the isem-data archive, fetch the last few days (SEMO's prices,
 # ENTSO-E's prices, EirGrid's wind forecast versions), run isem-forecast's live forecast,
 # and commit the day's two files to forecasts/. A day that already has a forecast (from
 # the laptop's backup run, say) is left alone: a saved forecast is never replaced.
@@ -14,7 +16,7 @@ name: Morning forecast
 
 on:
   schedule:
-    - cron: "30 7 * * *" # 07:30 UTC; the cut-off is 09:00 UTC, and GitHub sometimes starts late
+    - cron: "30 7 * * *" # 07:30 UTC, but in practice it starts hours late: a last resort, saved as late
   workflow_dispatch:
     inputs:
       day:
@@ -102,4 +104,13 @@ jobs:
           fi
           day=$(git diff --cached --name-only | grep -o '[0-9-]\{10\}' | head -1)
           git commit -q -m "Forecast for $day, made $(date -u +%H:%M) UTC"
-          git pull -q --rebase && git push -q
+          if ! { git pull -q --rebase && git push -q; }; then
+            # If the laptop saved this day first, its forecast stands: drop this copy.
+            git rebase --abort 2>/dev/null || true
+            git fetch -q origin
+            if git cat-file -e "origin/main:forecasts/$day.csv" 2>/dev/null; then
+              echo "The laptop saved $day first; this copy is dropped."
+              exit 0
+            fi
+            exit 1
+          fi

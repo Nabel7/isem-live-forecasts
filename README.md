@@ -34,7 +34,7 @@ To check when a forecast was made, look at its commit: GitHub records when every
 
 ## How it's made
 
-A GitHub job, [`.github/workflows/forecast.yml`](.github/workflows/forecast.yml), runs at 07:30 UTC. It downloads the data with [isem-data](https://github.com/Nabel7/isem-data), forecasts with [isem-forecast](https://github.com/Nabel7/isem-forecast) (`python -m isem_forecast.live`), and commits the result. A copy on a laptop, [`scripts/morning_forecast.sh`](scripts/morning_forecast.sh), runs at 08:30 Irish time and fills in if GitHub's job hasn't saved the day's forecast by then. If both make one, whichever is pushed first is kept, and the other is dropped. Commits made on the laptop end in "(laptop)".
+A GitHub job, [`.github/workflows/forecast.yml`](.github/workflows/forecast.yml), makes each forecast: it downloads the data with [isem-data](https://github.com/Nabel7/isem-data), forecasts with [isem-forecast](https://github.com/Nabel7/isem-forecast) (`python -m isem_forecast.live`), and commits the result. GitHub's own schedule starts runs hours late, so a laptop starts the job by hand at 07:30 Irish time ([`scripts/morning_forecast.sh`](scripts/morning_forecast.sh)). If GitHub hasn't saved the forecast within 15 minutes, the laptop makes it itself, and tries again at 08:15 if needed. If both make one, whichever is pushed first is kept, and the other is dropped. Commits made on the laptop end in "(laptop)".
 
 How these methods did in back-tests, and how much the live inputs differ from them (almost nothing), is in [isem-forecast's README](https://github.com/Nabel7/isem-forecast#the-morning-forecast). The live record will be scored on [Open Power Lab](https://nabel7.github.io/open-power-lab/forecasts/prices).
 

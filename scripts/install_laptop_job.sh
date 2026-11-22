@@ -1,8 +1,9 @@
 #!/bin/zsh
 # Set up (or refresh) the laptop's morning forecast as a launchd job for your user.
 #
-# Runs scripts/morning_forecast.sh at 08:30 local time every day, appending its output
-# to logs/morning.log. If the Mac is asleep at 08:30, launchd runs it when it wakes.
+# Runs scripts/morning_forecast.sh at 07:30 and 08:15 local time every day (the second
+# only matters if the first didn't get the forecast saved), appending its output to
+# logs/morning.log. If the Mac is asleep, launchd runs it at its next wake.
 #
 # Run now:     launchctl kickstart gui/$(id -u)/com.isem-live-forecasts.morning
 # Remove:      launchctl bootout gui/$(id -u)/com.isem-live-forecasts.morning
@@ -30,12 +31,20 @@ cat > "$plist" <<PLIST
         <string>$project/scripts/morning_forecast.sh</string>
     </array>
     <key>StartCalendarInterval</key>
-    <dict>
-        <key>Hour</key>
-        <integer>8</integer>
-        <key>Minute</key>
-        <integer>30</integer>
-    </dict>
+    <array>
+        <dict>
+            <key>Hour</key>
+            <integer>7</integer>
+            <key>Minute</key>
+            <integer>30</integer>
+        </dict>
+        <dict>
+            <key>Hour</key>
+            <integer>8</integer>
+            <key>Minute</key>
+            <integer>15</integer>
+        </dict>
+    </array>
     <key>StandardOutPath</key>
     <string>$log</string>
     <key>StandardErrorPath</key>
@@ -46,4 +55,4 @@ PLIST
 
 launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
 launchctl bootstrap "gui/$(id -u)" "$plist"
-echo "Installed $label: runs at 08:30 every day. Log: $log"
+echo "Installed $label: runs at 07:30 and 08:15 every day. Log: $log"
