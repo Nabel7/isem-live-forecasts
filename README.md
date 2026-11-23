@@ -1,6 +1,6 @@
 # isem-live-forecasts
 
-Forecasts of the Irish electricity market's day-ahead prices (the SEM day-ahead auction, run by SEMOpx), **made every morning before the auction** and saved here, one day at a time, so the record can be checked.
+Forecasts of the Irish electricity market's day-ahead prices (the SEM day-ahead auction, run by SEMOpx), **made before each day's auction** and saved here, one day at a time, so the record can be checked.
 
 Back-tests can always be tuned after the fact. These can't: each forecast is committed before the auction's 09:00 UTC cut-off, and never changed afterwards.
 
@@ -34,7 +34,11 @@ To check when a forecast was made, look at its commit: GitHub records when every
 
 ## How it's made
 
-A GitHub job, [`.github/workflows/forecast.yml`](.github/workflows/forecast.yml), makes each forecast: it downloads the data with [isem-data](https://github.com/Nabel7/isem-data), forecasts with [isem-forecast](https://github.com/Nabel7/isem-forecast) (`python -m isem_forecast.live`), and commits the result. GitHub's own schedule starts runs hours late, so a laptop starts the job by hand at 07:30 Irish time ([`scripts/morning_forecast.sh`](scripts/morning_forecast.sh)). If GitHub hasn't saved the forecast within 15 minutes, the laptop makes it itself, and tries again at 08:15 if needed. If both make one, whichever is pushed first is kept, and the other is dropped. Commits made on the laptop end in "(laptop)".
+A GitHub job, [`.github/workflows/forecast.yml`](.github/workflows/forecast.yml), makes each forecast: it downloads the data with [isem-data](https://github.com/Nabel7/isem-data), forecasts with [isem-forecast](https://github.com/Nabel7/isem-forecast) (`python -m isem_forecast.live`), and commits the result.
+
+The forecast for day D can be made once SEMO has published D-2's prices (01:00 UTC on D-1) and must be saved by the 09:00 UTC cut-off. GitHub's schedule starts runs hours late, so the job is scheduled six times, from 19:30 UTC the evening before; the first run inside that window saves the forecast, a run that comes too early stops quietly, and the rest find it saved. As a spare, a laptop starts the job by hand at 07:30 Irish time ([`scripts/morning_forecast.sh`](scripts/morning_forecast.sh)), makes the forecast itself if GitHub hasn't within 15 minutes, and tries again at 08:15 if needed. If two make one, whichever is pushed first is kept, and the other is dropped. Commits made on the laptop end in "(laptop)".
+
+If something the forecast needs isn't published by the cut-off (on 23 Nov 2026 SEMO's wind forecast hadn't been updated for two and a half days), that day has no forecast, and the failed run says why.
 
 How these methods did in back-tests, and how much the live inputs differ from them (almost nothing), is in [isem-forecast's README](https://github.com/Nabel7/isem-forecast#the-morning-forecast). The live record will be scored on [Open Power Lab](https://nabel7.github.io/open-power-lab/forecasts/prices).
 

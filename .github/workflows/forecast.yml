@@ -1,11 +1,18 @@
-# The morning forecast: tomorrow's SEM day-ahead prices, saved here before the auction.
+# The forecast of a delivery day's SEM day-ahead prices, saved here before its auction.
 #
-# Started by hand each morning by the laptop (scripts/morning_forecast.sh, at 07:30 local
-# time): GitHub's own schedule starts runs hours late, so the schedule below is only a
-# last resort. Each run: take the isem-data archive, fetch the last few days (SEMO's prices,
-# ENTSO-E's prices, EirGrid's wind forecast versions), run isem-forecast's live forecast,
-# and commit the day's two files to forecasts/. A day that already has a forecast (from
-# the laptop's backup run, say) is left alone: a saved forecast is never replaced.
+# When: a forecast for delivery day D can be made once SEMO has published D-2's prices
+# (01:00 UTC on D-1), and must be saved by the cut-off (09:00 UTC on D-1). GitHub starts
+# scheduled runs hours late (4 to 10 hours has been usual), so this tries six times,
+# from 19:30 UTC the evening before: whichever run lands in that window saves it, and
+# the rest find it saved and stop within seconds. A run that comes too early stops
+# quietly ("not ready yet"); only a run after the cut-off with nothing saved fails.
+# The laptop also starts this job by hand at 07:30 Irish time
+# (scripts/morning_forecast.sh), as a spare.
+#
+# Each run: take the isem-data archive, fetch the last few days (SEMO's prices,
+# ENTSO-E's prices, EirGrid's wind forecast versions), run isem-forecast's live
+# forecast, and commit the day's two files to forecasts/. A day that already has a
+# forecast is left alone: a saved forecast is never replaced.
 #
 # Secrets (Settings > Secrets and variables > Actions):
 #   ARCHIVE_TOKEN   a fine-grained token that can read Nabel7/isem-data-archive (Contents:
@@ -15,12 +22,17 @@
 name: Morning forecast
 
 on:
-  schedule:
-    - cron: "30 7 * * *" # 07:30 UTC, but in practice it starts hours late: a last resort, saved as late
+  schedule: # all UTC; each usually starts hours late, which is the point
+    - cron: "30 19 * * *"
+    - cron: "30 21 * * *"
+    - cron: "30 23 * * *"
+    - cron: "30 1 * * *"
+    - cron: "30 3 * * *"
+    - cron: "30 5 * * *"
   workflow_dispatch:
     inputs:
       day:
-        description: "Delivery day, YYYY-MM-DD (default: tomorrow). A past day is marked late."
+        description: "Delivery day, YYYY-MM-DD (default: the next day whose cut-off is still ahead). A past day is marked late."
         default: ""
 
 permissions:
@@ -29,9 +41,41 @@ permissions:
 concurrency: morning-forecast # never two at once
 
 jobs:
+  # Which day, and is there anything to do? Seconds, so the many scheduled runs cost little.
+  pick:
+    runs-on: ubuntu-latest
+    outputs:
+      day: ${{ steps.pick.outputs.day }}
+      todo: ${{ steps.pick.outputs.todo }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: pick
+        env:
+          DAY: ${{ inputs.day }}
+        run: |
+          if [ -n "$DAY" ]; then
+            day=$DAY
+          elif [ "$(date -u +%H)" -lt 9 ]; then
+            day=$(date -u -d tomorrow +%Y-%m-%d)   # its cut-off is 09:00 UTC today
+          else
+            day=$(date -u -d '+2 days' +%Y-%m-%d)  # tomorrow's cut-off has passed
+          fi
+          echo "day=$day" >> "$GITHUB_OUTPUT"
+          if [ -e "forecasts/$day.csv" ]; then
+            echo "$day already has a forecast: nothing to do."
+            echo "todo=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Forecasting $day."
+            echo "todo=true" >> "$GITHUB_OUTPUT"
+          fi
+
   forecast:
+    needs: pick
+    if: needs.pick.outputs.todo == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    env:
+      DAY: ${{ needs.pick.outputs.day }}
     steps:
       - uses: actions/checkout@v4
 
@@ -77,8 +121,8 @@ jobs:
           fi
           zsh scripts/restore_data.sh github:Nabel7/isem-data-archive
 
-      # The archive is backed up once a day; this brings it up to this morning. A source
-      # that fails here isn't fatal: the forecast step says if anything it needs is missing.
+      # The archive is backed up once a day; this brings it up to now. A source that
+      # fails here isn't fatal: the forecast step says if anything it needs is missing.
       - name: Fetch the last few days
         working-directory: isem-data
         continue-on-error: true
@@ -88,10 +132,22 @@ jobs:
           python -m isem_data --datasets prices entsoe_prices wind_unit_forecasts \
             --start "$(date -u -d '3 days ago' +%Y-%m-%d)" --end "$(date -u +%Y-%m-%d)"
 
+      # "Not ready" before the cut-off just means too early (a later run will try again);
+      # after the cut-off it's a missed day, and the run fails so it shows.
       - name: Forecast
-        env:
-          DAY: ${{ inputs.day }}
-        run: python -m isem_forecast.live --data-dir isem-data/data --out forecasts ${DAY:+--day "$DAY"}
+        run: |
+          set +e
+          python -m isem_forecast.live --data-dir isem-data/data --out forecasts --day "$DAY" \
+            2>&1 | tee "$RUNNER_TEMP/forecast.log"
+          code=${PIPESTATUS[0]}
+          set -e
+          [ "$code" -eq 0 ] && exit 0
+          cutoff=$(date -u -d "$DAY -1 day 09:00" +%s)
+          if grep -q "^Not ready" "$RUNNER_TEMP/forecast.log" && [ "$(date -u +%s)" -lt "$cutoff" ]; then
+            echo "::notice::Not ready to forecast $DAY yet; a later run will try again before the cut-off."
+            exit 0
+          fi
+          exit "$code"
 
       - name: Save
         run: |
@@ -102,14 +158,13 @@ jobs:
             echo "Nothing new to save."
             exit 0
           fi
-          day=$(git diff --cached --name-only | grep -o '[0-9-]\{10\}' | head -1)
-          git commit -q -m "Forecast for $day, made $(date -u +%H:%M) UTC"
+          git commit -q -m "Forecast for $DAY, made $(date -u +%H:%M) UTC"
           if ! { git pull -q --rebase && git push -q; }; then
             # If the laptop saved this day first, its forecast stands: drop this copy.
             git rebase --abort 2>/dev/null || true
             git fetch -q origin
-            if git cat-file -e "origin/main:forecasts/$day.csv" 2>/dev/null; then
-              echo "The laptop saved $day first; this copy is dropped."
+            if git cat-file -e "origin/main:forecasts/$DAY.csv" 2>/dev/null; then
+              echo "The laptop saved $DAY first; this copy is dropped."
               exit 0
             fi
             exit 1

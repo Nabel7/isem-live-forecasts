@@ -1,19 +1,21 @@
 #!/bin/zsh
-# Gets the morning forecast made in time, from the laptop.
+# The laptop's spare try at the morning forecast.
 #
-# launchd runs this at 07:30 and again at 08:15 local time (see install_laptop_job.sh).
-# If tomorrow's forecast is already saved, there's nothing to do. Otherwise:
+# GitHub's job (.github/workflows/forecast.yml) tries six times overnight, and usually
+# has the forecast saved before this runs. launchd runs this at 07:30 and again at 08:15
+# local time (see install_laptop_job.sh). If the next day's forecast is already saved,
+# there's nothing to do. Otherwise:
 #
-# 1. It starts GitHub's job (.github/workflows/forecast.yml) by hand and waits up to
-#    WAIT_MINUTES for it to save the forecast. GitHub's own schedule starts runs hours
-#    late (07:30 runs have started after 15:00), but a run started by hand begins within
-#    a minute or two, and does the work on GitHub's servers.
+# 1. It starts GitHub's job by hand and waits up to WAIT_MINUTES for it to save the
+#    forecast. A run started by hand begins within a minute or two, and does the work on
+#    GitHub's servers.
 # 2. If GitHub hasn't saved it by then, it forecasts here: downloads the last few days
 #    with isem-data, forecasts with isem-forecast, and commits and pushes the two files.
 #
-# The Mac is kept awake while this runs. Asleep with the lid shut, macOS only wakes it
-# for about 20 seconds every 15 minutes: on 22 Nov 2026 that stretched a one-minute run
-# over two hours, past the cut-off.
+# The Mac is kept awake while this runs, but only while it's plugged in: on battery with
+# the lid shut, macOS sleeps anyway, waking for seconds at a time (23 Nov 2026: asleep
+# from 07:38 until the lid was opened at 09:40). The wait below counts real time, so a
+# sleep can't stretch it.
 #
 # If both make a forecast for the same day, whichever pushes first is kept: the other's
 # push fails, and this script drops its own copy. A saved forecast is never replaced.
@@ -53,7 +55,13 @@ if ! git pull -q --ff-only; then
     exit 1
 fi
 
-day=$(TZ=Europe/Dublin date -v+1d +%Y-%m-%d)  # tomorrow, by the date in Ireland
+# The next delivery day whose cut-off (09:00 UTC the day before) is still ahead, as in
+# GitHub's job: tomorrow before 09:00 UTC, the day after once tomorrow's has passed.
+if [[ $(date -u +%H) < 09 ]]; then
+    day=$(date -u -v+1d +%Y-%m-%d)
+else
+    day=$(date -u -v+2d +%Y-%m-%d)
+fi
 if [[ -e forecasts/$day.csv ]]; then
     say "$day already has a forecast: nothing to do"
     exit 0
@@ -63,7 +71,8 @@ fi
 saved() { git fetch -q origin && git cat-file -e "origin/main:forecasts/$day.csv" 2>/dev/null; }
 if gh workflow run forecast.yml -R Nabel7/isem-live-forecasts >/dev/null 2>&1; then
     say "started GitHub's job; waiting up to $WAIT_MINUTES minutes for it"
-    for (( i = 0; i < WAIT_MINUTES * 2; i++ )); do
+    deadline=$(( $(date +%s) + WAIT_MINUTES * 60 ))
+    while (( $(date +%s) < deadline )); do
         sleep 30
         if saved; then
             git pull -q --ff-only
