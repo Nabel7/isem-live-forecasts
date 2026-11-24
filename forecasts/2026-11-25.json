@@ -1,0 +1,18 @@
+{
+  "day": "2026-11-25",
+  "made_at_utc": "2026-11-24T04:24:27Z",
+  "cutoff_utc": "2026-11-24T09:00Z",
+  "in_time": true,
+  "wind_forecast_published_utc": "2026-11-22T18:14Z",
+  "newest_price_day": "2026-11-24",
+  "newest_price_source": "ENTSO-E (hourly, each hour as two equal half-hours)",
+  "methods_without_forecast": [],
+  "context_days": 28,
+  "versions": {
+    "model": "amazon/chronos-2",
+    "chronos-forecasting": "2.3.2",
+    "lightgbm": "4.7.0",
+    "torch": "2.15.0+cpu",
+    "isem_forecast_commit": "a9a8c0a923b328e1a83a42a01764cbc013161fce"
+  }
+}
