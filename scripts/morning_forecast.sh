@@ -88,7 +88,7 @@ fi
 # 2. Forecast here. The newest prices and wind forecast versions. If a download fails, forecast with
 # what's there: live.py says "not ready" if something it needs is missing.
 (cd "$data_project" && .venv/bin/python -m isem_data \
-    --datasets prices entsoe_prices wind_unit_forecasts \
+    --datasets prices entsoe_prices wind_unit_forecasts entsoe_wind_forecasts \
     --start "$(date -u -v-3d +%Y-%m-%d)" --end "$(date -u +%Y-%m-%d)") \
     || echo "Some downloads failed; forecasting with what's there."
 

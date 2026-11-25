@@ -27,7 +27,7 @@ A delivery day runs from 23:00 to 23:00 Irish time. Times in the files are UTC.
 - **Only what was public by then:**
   - SEMO's half-hourly prices up to two days before;
   - yesterday's prices from the [ENTSO-E Transparency Platform](https://transparency.entsoe.eu), hourly, because SEMO publishes them after the day;
-  - the newest version of EirGrid's wind forecast that SEMO had listed, usually the one from the evening before.
+  - the newest version of EirGrid's wind forecast that SEMO had listed, usually the one from the evening before. If SEMO hasn't listed one that covers the day by three hours before the cut-off, ENTSO-E's wind forecast is used instead, as first seen before then, and the `.json` says so (`wind_source`).
 - **Never replaced.** A day that has a forecast keeps it.
 
 To check when a forecast was made, look at its commit: GitHub records when every commit was pushed (the repository's Activity page). The `.json` file says the same from the inside.

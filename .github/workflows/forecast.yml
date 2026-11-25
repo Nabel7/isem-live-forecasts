@@ -10,7 +10,8 @@
 # (scripts/morning_forecast.sh), as a spare.
 #
 # Each run: take the isem-data archive, fetch the last few days (SEMO's prices,
-# ENTSO-E's prices, EirGrid's wind forecast versions), run isem-forecast's live
+# ENTSO-E's prices, EirGrid's wind forecast versions, ENTSO-E's wind forecast as a
+# backup), run isem-forecast's live
 # forecast, and commit the day's two files to forecasts/. A day that already has a
 # forecast is left alone: a saved forecast is never replaced.
 #
@@ -129,7 +130,7 @@ jobs:
         env:
           ENTSOE_TOKEN: ${{ secrets.ENTSOE_TOKEN }}
         run: |
-          python -m isem_data --datasets prices entsoe_prices wind_unit_forecasts \
+          python -m isem_data --datasets prices entsoe_prices wind_unit_forecasts entsoe_wind_forecasts \
             --start "$(date -u -d '3 days ago' +%Y-%m-%d)" --end "$(date -u +%Y-%m-%d)"
 
       # "Not ready" before the cut-off just means too early (a later run will try again);
