@@ -3,8 +3,9 @@
 #
 # GitHub's job (.github/workflows/forecast.yml) tries six times overnight, and usually
 # has the forecast saved before this runs. launchd runs this at 07:30 and again at 08:15
-# local time (see install_laptop_job.sh). If the next day's forecast is already saved,
-# there's nothing to do. Otherwise:
+# local time (see install_laptop_job.sh). If the next day's forecast is already saved
+# with SEMO's wind forecast, there's nothing to do. Otherwise (no forecast yet, or one
+# made with the backup wind or none, which a better one may replace before the cut-off):
 #
 # 1. It starts GitHub's job by hand and waits up to WAIT_MINUTES for it to save the
 #    forecast. A run started by hand begins within a minute or two, and does the work on
@@ -18,7 +19,7 @@
 # sleep can't stretch it.
 #
 # If both make a forecast for the same day, whichever pushes first is kept: the other's
-# push fails, and this script drops its own copy. A saved forecast is never replaced.
+# push fails, and this script drops its own copy. Nothing is replaced after the cut-off.
 #
 # Safe to run by hand at any time. Uses the two projects' own .venv folders:
 #   ISEM_DATA_PROJECT     (default ~/Developer/isem-data)
@@ -62,20 +63,23 @@ if [[ $(date -u +%H) < 09 ]]; then
 else
     day=$(date -u -v+2d +%Y-%m-%d)
 fi
-if [[ -e forecasts/$day.csv ]]; then
-    say "$day already has a forecast: nothing to do"
+# Is there anything to do? isem-forecast decides: exit 3 means the saved forecast stands.
+todo() {
+    "$forecast_project/.venv/bin/python" -m isem_forecast.live --check --day "$day" --out forecasts
+    (( $? != 3 ))
+}
+if ! todo; then
     exit 0
 fi
 
 # 1. Start GitHub's job, and give it time to save the forecast.
-saved() { git fetch -q origin && git cat-file -e "origin/main:forecasts/$day.csv" 2>/dev/null; }
+saved() { git pull -q --ff-only && ! todo >/dev/null; }
 if gh workflow run forecast.yml -R Nabel7/isem-live-forecasts >/dev/null 2>&1; then
     say "started GitHub's job; waiting up to $WAIT_MINUTES minutes for it"
     deadline=$(( $(date +%s) + WAIT_MINUTES * 60 ))
     while (( $(date +%s) < deadline )); do
         sleep 30
         if saved; then
-            git pull -q --ff-only
             say "GitHub's job saved $day: nothing more to do"
             exit 0
         fi
@@ -99,9 +103,18 @@ if [[ ! -e forecasts/$day.csv ]]; then
     notify "No forecast for $day. See isem-live-forecasts/logs/morning.log"
     exit 1
 fi
+if [[ -z $(git status --porcelain -- "forecasts/$day.csv" "forecasts/$day.json") ]]; then
+    say "the saved forecast for $day stands: no better wind input here"
+    exit 0
+fi
 
 git add "forecasts/$day.csv" "forecasts/$day.json"
-git commit -q -m "Forecast for $day, made $(date -u +%H:%M) UTC (laptop)"
+if git diff --cached --name-status | grep -q "^M"; then
+    what="Better forecast for $day (replaces the earlier one)"
+else
+    what="Forecast for $day"
+fi
+git commit -q -m "$what, made $(date -u +%H:%M) UTC (laptop)"
 if git pull -q --rebase && git push -q; then
     say "saved and pushed the forecast for $day"
     exit 0
