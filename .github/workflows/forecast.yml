@@ -3,17 +3,21 @@
 # When: a forecast for delivery day D can be made once SEMO has published D-2's prices
 # (01:00 UTC on D-1), and must be saved by the cut-off (09:00 UTC on D-1). GitHub starts
 # scheduled runs hours late (4 to 10 hours has been usual), so this tries six times,
-# from 19:30 UTC the evening before: whichever run lands in that window saves it, and
-# the rest find it saved and stop within seconds. A run that comes too early stops
-# quietly ("not ready yet"); only a run after the cut-off with nothing saved fails.
+# from 19:30 UTC the evening before. The first run in that window saves a forecast at
+# once, with the best wind input it has (SEMO's wind forecast, else ENTSO-E's, else
+# none). Later runs before the cut-off try again only if it lacks SEMO's, and replace it
+# only with a better input ("save early, replace later": isem-forecast's live.py). Once
+# a day has SEMO's, or its cut-off has passed, the rest stop within seconds. A run that
+# comes too early stops quietly ("not ready yet"); only a run after the cut-off with
+# nothing saved fails.
 # The laptop also starts this job by hand at 07:30 Irish time
 # (scripts/morning_forecast.sh), as a spare.
 #
 # Each run: take the isem-data archive, fetch the last few days (SEMO's prices,
 # ENTSO-E's prices, EirGrid's wind forecast versions, ENTSO-E's wind forecast as a
 # backup), run isem-forecast's live
-# forecast, and commit the day's two files to forecasts/. A day that already has a
-# forecast is left alone: a saved forecast is never replaced.
+# forecast, and commit the day's two files to forecasts/. Nothing is replaced after
+# the cut-off.
 #
 # Secrets (Settings > Secrets and variables > Actions):
 #   ARCHIVE_TOKEN   a fine-grained token that can read Nabel7/isem-data-archive (Contents:
@@ -62,12 +66,20 @@ jobs:
             day=$(date -u -d '+2 days' +%Y-%m-%d)  # tomorrow's cut-off has passed
           fi
           echo "day=$day" >> "$GITHUB_OUTPUT"
-          if [ -e "forecasts/$day.csv" ]; then
-            echo "$day already has a forecast: nothing to do."
-            echo "todo=false" >> "$GITHUB_OUTPUT"
-          else
+          info=forecasts/$day.json
+          now=$(date -u +%Y-%m-%dT%H:%MZ)
+          # Can a saved forecast still be improved? Before its cut-off, and only if it lacks
+          # SEMO's wind forecast: as can_improve() in isem-forecast's live.py.
+          improvable='($now < .cutoff_utc) and (.wind_forecast_published_utc == null or ((.wind_source // "SEMO") != "SEMO"))'
+          if [ ! -e "$info" ]; then
             echo "Forecasting $day."
             echo "todo=true" >> "$GITHUB_OUTPUT"
+          elif jq -e --arg now "$now" "$improvable" "$info" >/dev/null; then
+            echo "$day has a forecast without SEMO's wind forecast: trying for a better one."
+            echo "todo=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "$day already has a forecast: nothing to do."
+            echo "todo=false" >> "$GITHUB_OUTPUT"
           fi
 
   forecast:
@@ -159,9 +171,15 @@ jobs:
             echo "Nothing new to save."
             exit 0
           fi
-          git commit -q -m "Forecast for $DAY, made $(date -u +%H:%M) UTC"
+          if git diff --cached --name-status | grep -q "^M"; then
+            what="Better forecast for $DAY (replaces the earlier one)"
+          else
+            what="Forecast for $DAY"
+          fi
+          git commit -q -m "$what, made $(date -u +%H:%M) UTC"
           if ! { git pull -q --rebase && git push -q; }; then
-            # If the laptop saved this day first, its forecast stands: drop this copy.
+            # If the laptop saved this day first, its forecast stands: drop this copy (a
+            # later run can still improve it before the cut-off).
             git rebase --abort 2>/dev/null || true
             git fetch -q origin
             if git cat-file -e "origin/main:forecasts/$DAY.csv" 2>/dev/null; then

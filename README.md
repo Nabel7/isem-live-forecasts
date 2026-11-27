@@ -27,8 +27,8 @@ A delivery day runs from 23:00 to 23:00 Irish time. Times in the files are UTC.
 - **Only what was public by then:**
   - SEMO's half-hourly prices up to two days before;
   - yesterday's prices from the [ENTSO-E Transparency Platform](https://transparency.entsoe.eu), hourly, because SEMO publishes them after the day;
-  - the newest version of EirGrid's wind forecast that SEMO had listed, usually the one from the evening before. If SEMO hasn't listed one that covers the day by three hours before the cut-off, ENTSO-E's wind forecast is used instead, as first seen before then, and the `.json` says so (`wind_source`).
-- **Never replaced.** A day that has a forecast keeps it.
+  - the newest version of EirGrid's wind forecast that SEMO had listed, usually the one from the evening before. If SEMO hasn't listed one that covers the day, ENTSO-E's wind forecast is used instead, as first seen by then, and the `.json` says so (`wind_source`); with neither, the forecast is saved without wind and doesn't count.
+- **Save early, replace later, never after the cut-off.** The first run that can make a forecast saves one at once, with the best wind input it has. A later run before the cut-off replaces it only if its wind input is better (none, then ENTSO-E's, then SEMO's), and the `.json` lists what it replaced (`replaced`). Which forecast stands depends on the input alone, never on the prices forecast. After the cut-off, a day's files are never changed; the commit history shows every version.
 
 To check when a forecast was made, look at its commit: GitHub records when every commit was pushed (the repository's Activity page). The `.json` file says the same from the inside.
 
@@ -36,9 +36,9 @@ To check when a forecast was made, look at its commit: GitHub records when every
 
 A GitHub job, [`.github/workflows/forecast.yml`](.github/workflows/forecast.yml), makes each forecast: it downloads the data with [isem-data](https://github.com/Nabel7/isem-data), forecasts with [isem-forecast](https://github.com/Nabel7/isem-forecast) (`python -m isem_forecast.live`), and commits the result.
 
-The forecast for day D can be made once SEMO has published D-2's prices (01:00 UTC on D-1) and must be saved by the 09:00 UTC cut-off. GitHub's schedule starts runs hours late, so the job is scheduled six times, from 19:30 UTC the evening before; the first run inside that window saves the forecast, a run that comes too early stops quietly, and the rest find it saved. As a spare, a laptop starts the job by hand at 07:30 Irish time ([`scripts/morning_forecast.sh`](scripts/morning_forecast.sh)), makes the forecast itself if GitHub hasn't within 15 minutes, and tries again at 08:15 if needed. If two make one, whichever is pushed first is kept, and the other is dropped. Commits made on the laptop end in "(laptop)".
+The forecast for day D can be made once SEMO has published D-2's prices (01:00 UTC on D-1) and must be saved by the 09:00 UTC cut-off. GitHub's schedule starts runs hours late, so the job is scheduled six times, from 19:30 UTC the evening before; the first run inside that window saves a forecast, a run that comes too early stops quietly, and the rest stop at once unless they might improve it (see above). As a spare, a laptop starts the job by hand at 07:30 Irish time ([`scripts/morning_forecast.sh`](scripts/morning_forecast.sh)), makes the forecast itself if GitHub hasn't within 15 minutes, and tries again at 08:15 if needed. If two make one, whichever is pushed first is kept, and the other is dropped. Commits made on the laptop end in "(laptop)".
 
-If something the forecast needs isn't published by the cut-off (on 23 Nov 2026 SEMO's wind forecast hadn't been updated for two and a half days), that day has no forecast, and the failed run says why.
+If SEMO's or ENTSO-E's prices for the days before aren't published by the cut-off, that day has no forecast, and the failed run says why. A missing wind forecast no longer stops it (see above): on 26 Nov 2026, under the old rule of waiting for SEMO's until three hours before the cut-off, no run came in those hours and 27 Nov got no forecast.
 
 How these methods did in back-tests, and how much the live inputs differ from them (almost nothing), is in [isem-forecast's README](https://github.com/Nabel7/isem-forecast#the-morning-forecast). The live record will be scored on [Open Power Lab](https://nabel7.github.io/open-power-lab/forecasts/prices).
 
